@@ -1,0 +1,110 @@
+# Batswag.py
+
+from fastapi import FastAPI, Query
+from fastapi.responses import JSONResponse, HTMLResponse
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import io
+import base64
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from pydantic import BaseModel
+
+app = FastAPI(title="T20 World Cup 2024 - Batting Stats API")
+
+# Load and preprocess data
+df = pd.read_csv("data/batting_stats_for_icc_mens_t20_world_cup_2024.csv")
+df['HS'] = pd.to_numeric(df['HS'], errors='coerce')
+df['Runs'] = pd.to_numeric(df['Runs'], errors='coerce')
+df['SR'] = pd.to_numeric(df['SR'], errors='coerce')
+df['NO'] = pd.to_numeric(df['NO'], errors='coerce')
+df['Ave'] = pd.to_numeric(df['Ave'], errors='coerce')
+df.dropna(subset=['Runs', 'SR', 'NO', 'Ave'], inplace=True)
+
+# ML model setup
+features = ['SR', 'Mat', 'Ave', 'NO']
+target = 'Runs'
+X = df[features]
+y = df[target]
+X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_size=0.2)
+model = RandomForestRegressor()
+model.fit(X_train, y_train)
+
+# Utility: Normalize
+def normalize_df(features):
+    df_norm = df.copy()
+    df_norm[features] = df[features].apply(lambda x: (x - x.min()) / (x.max() - x.min()))
+    return df_norm
+
+# Utility: Radar image generation
+def generate_radar_image(players, features):
+    df_norm = normalize_df(features)
+    labels = np.array(features)
+    angles = np.linspace(0, 2 * np.pi, len(labels), endpoint=False).tolist()
+    angles += angles[:1]
+
+    fig, ax = plt.subplots(figsize=(6, 6), subplot_kw=dict(polar=True))
+
+    for player in players:
+        values = df_norm[df_norm['Player'] == player][features].values.flatten().tolist()
+        if not values:
+            continue
+        values += values[:1]
+        ax.plot(angles, values, label=player)
+        ax.fill(angles, values, alpha=0.1)
+
+    ax.set_thetagrids(np.degrees(angles[:-1]), labels)
+    ax.set_title("Radar Comparison")
+    ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1))
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png")
+    buf.seek(0)
+    img_bytes = base64.b64encode(buf.read()).decode("utf-8")
+    plt.close(fig)
+    return img_bytes
+
+# Input schema for predictions
+class PredictInput(BaseModel):
+    SR: float
+    Mat: int
+    Ave: float
+    NO: int
+
+# ---------------------- API Routes ----------------------
+
+@app.get("/")
+def root():
+    return {"message": "🏏 Welcome to the T20 World Cup Batting Stats API!"}
+
+@app.get("/players")
+def get_players():
+    return {"players": df['Player'].dropna().unique().tolist()}
+
+@app.get("/player-stats")
+def player_stats(player: str):
+    player_data = df[df['Player'] == player]
+    if player_data.empty:
+        return JSONResponse(status_code=404, content={"error": "Player not found"})
+    return player_data.to_dict(orient="records")[0]
+
+@app.get("/radar", response_class=HTMLResponse)
+def radar(players: str = Query(...), features: str = Query(...)):
+    player_list = players.split(",")
+    feature_list = features.split(",")
+    image_data = generate_radar_image(player_list, feature_list)
+    html = f"<img src='data:image/png;base64,{image_data}'/>"
+    return html
+
+@app.post("/predict-runs")
+def predict_runs(input_data: PredictInput):
+    data = [[input_data.SR, input_data.Mat, input_data.Ave, input_data.NO]]
+    prediction = model.predict(data)[0]
+    return {"predicted_runs": round(prediction, 2)}
+
+
+
+
+
+
