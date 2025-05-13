@@ -103,6 +103,10 @@ def predict_runs(input_data: PredictInput):
     prediction = model.predict(data)[0]
     return {"predicted_runs": round(prediction, 2)}
 
+app = dash.Dash(__name__, ...)
+server = app.server  # <- THIS is what Gunicorn needs
+
+
 
 
 
